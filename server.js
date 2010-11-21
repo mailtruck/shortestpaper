@@ -1,12 +1,9 @@
-var app, express, fs, http, instapaper, jquery, jsdom, proxy, queryString, redis, request, sys, url;
+var app, express, http, instapaper, jquery, jsdom, proxy, redis, request, sys;
 require('joose');
 require('joosex-namespace-depended');
 require('hash');
 http = require('http');
 sys = require('sys');
-fs = require('fs');
-url = require('url');
-queryString = require('querystring');
 proxy = require('./htmlfiltre');
 jsdom = require('jsdom');
 express = require('express');
@@ -14,53 +11,65 @@ redis = require('redis').createClient();
 request = require('request');
 jquery = 'https://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js';
 instapaper = 'www.instapaper.com';
+setInterval(function() {
+  return redis.lpop('download', function(error, reply) {
+    var key, url;
+    if (typeof reply !== "undefined" && reply !== null) {
+      url = reply.toString();
+      key = Hash.sha1(url).slice(0, 9 + 1);
+      return request({
+        uri: url
+      }, function(error, resp, body) {
+        return !(typeof error !== "undefined" && error !== null) ? jsdom.jQueryify(jsdom.jsdom(body).createWindow(), jquery, function(w, $) {
+          var _i, _len, _ref, count, word, words;
+          if (w.document.outerHTML.match(/Exceeded rate limit/)) {
+            return redis.rpush('download', url);
+          } else {
+            count = 0;
+            words = $('#story').text().split(/\s+/);
+            _ref = words;
+            for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+              word = _ref[_i];
+              if (word.length > 2) {
+                count += 1;
+              }
+            }
+            return redis.hmset(key, 'size', count, 'url', url);
+          }
+        }) : null;
+      });
+    }
+  });
+}, 10000);
 http.createServer(function(req, res) {
-  sys.puts('proxy');
   return proxy.htmlFiltre(req, {
-    foreignHost: instapaper,
-    foreignHostPort: 80
-  }, function(status, buffer, request, response, loc) {
+    foreignHost: instapaper
+  }, function(status, buffer, preq, response, loc) {
     var headers;
     headers = response.headers;
     res.writeHead('200', headers);
-    if (headers['content-type'].match(/text\/html/)) {
-      sys.puts('jqueryify');
-      return jsdom.jQueryify(jsdom.jsdom(buffer).createWindow(), jquery, function(w, $) {
-        $('#bookmark_list > .tableViewCell').each(function(i, e) {
-          var key, textHref;
-          textHref = $('.textButton', e).attr('href');
-          url = ("http://www.instapaper.com" + (textHref));
-          key = Hash.md5(url);
-          sys.puts('hget');
-          return redis.hget(key, 'size', function(ehget, reply) {
-            if (!(typeof reply !== "undefined" && reply !== null)) {
-              sys.puts('request');
-              return request({
-                uri: url
-              }, function(erequest, response, body) {
-                sys.puts('jqueryify');
-                return jsdom.jQueryify(jsdom.jsdom(body).createWindow(), jquery, function(tw, tj) {
-                  var count;
-                  count = 0;
-                  tj.each(tj('#story').text().split(/\s+/), function(index, word) {
-                    if (word.length > 2) {
-                      return count++;
-                    }
-                  });
-                  sys.puts('hmset');
-                  return redis.hmset(key, 'size', count, 'url', url, function(ehmset, r) {
-                    return (typeof ehmset !== "undefined" && ehmset !== null) ? sys.puts("ERROR: Storing info about " + (url) + " failed! " + (ehmset)) : sys.puts("Stored " + (url) + " with size " + (count));
-                  });
-                });
-              });
-            }
-          });
+    return headers['content-type'].match(/text\/html/) ? jsdom.jQueryify(jsdom.jsdom(buffer).createWindow(), jquery, function(w, $) {
+      var document, script;
+      document = w.document;
+      script = document.createElement('script');
+      script.src = jquery;
+      script.type = 'text/javascript';
+      document.body.appendChild(script);
+      script = document.createElement('script');
+      script.src = ("http://" + (req.headers.host) + ":8081/sorting.js");
+      script.type = 'text/javascript';
+      document.body.appendChild(script);
+      $('#bookmark_list > .tableViewCell').each(function(i, e) {
+        var key, url;
+        url = ("http://" + (instapaper) + ($('.textButton', e).attr('href')));
+        key = Hash.sha1(url).slice(0, 9 + 1);
+        $(e).attr('key', key);
+        return redis.hget(key, 'size', function(error, reply) {
+          return !(typeof reply !== "undefined" && reply !== null) ? redis.rpush('download', url) : null;
         });
-        return res.end(w.document.outerHTML.replace(/&amp;/g, '&'));
       });
-    } else {
-      return res.end(buffer);
-    }
+      return res.end(w.document.outerHTML.replace(/&amp;/g, '&'));
+    }) : res.end(buffer);
   }, function(loc) {
     res.writeHead('302', {
       location: loc
@@ -69,7 +78,5 @@ http.createServer(function(req, res) {
   });
 }).listen(8080);
 app = express.createServer();
-app.get('/', function(req, res) {
-  return res.send('Hello, World!');
-});
+app.use(express.staticProvider(__dirname + '/public'));
 app.listen(8081);

@@ -1,13 +1,8 @@
-# https://github.com/billywhizz/node-httpclient
-
 require('joose')
 require('joosex-namespace-depended')
 require('hash')
 http = require('http')
 sys = require('sys')
-fs = require('fs')
-url = require('url')
-queryString = require('querystring')
 proxy = require('./htmlfiltre')
 jsdom = require('jsdom')
 express = require('express')
@@ -16,39 +11,52 @@ request = require('request')
 jquery = 'https://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js'
 instapaper = 'www.instapaper.com'
 
+setInterval((() ->
+  redis.lpop 'download', (error, reply) ->
+    if reply?
+      url = reply.toString()
+      key = Hash.sha1(url)[0..9]
+      request { uri: url }, (error, resp, body) ->
+        unless error?
+          jsdom.jQueryify jsdom.jsdom(body).createWindow(), jquery, (w, $) ->
+            if w.document.outerHTML.match(/Exceeded rate limit/)
+              # Try again
+              redis.rpush 'download', url
+            else
+              # Count the number of words in the `#story` element.
+              count = 0
+              words = $('#story').text().split(/\s+/)
+              for word in words
+                # Only include words > 2 characters
+                count += 1 if word.length > 2
+              redis.hmset key, 'size', count, 'url', url
+), 10000)
+
 http.createServer((req, res) ->
-  sys.puts('proxy')
-  proxy.htmlFiltre(req, { foreignHost: instapaper, foreignHostPort: 80 }, ((status, buffer, request, response, loc) ->
+  proxy.htmlFiltre(req, { foreignHost: instapaper }, ((status, buffer, preq, response, loc) ->
     headers = response.headers
     res.writeHead('200', headers)
 
     if headers['content-type'].match(/text\/html/)
-      sys.puts('jqueryify')
       jsdom.jQueryify jsdom.jsdom(buffer).createWindow(), jquery, (w, $) ->
-        $('#bookmark_list > .tableViewCell').each (i, e) ->
-          textHref = $('.textButton', e).attr('href')
-          url = "http://www.instapaper.com#{textHref}"
-          key = Hash.md5(url)
-          sys.puts('hget')
-          redis.hget key, 'size', (ehget, reply) ->
-            unless reply?
-              sys.puts('request')
-              request { uri: url }, (erequest, response, body) ->
-                sys.puts('jqueryify')
-                jsdom.jQueryify jsdom.jsdom(body).createWindow(), jquery, (tw, tj) ->
-                  # Count the number of words in the #story element.
-                  count = 0
-                  tj.each tj('#story').text().split(/\s+/), (index, word) ->
-                    # Only include words > 2 characters
-                    count++ if word.length > 2
-                  sys.puts('hmset')
-                  redis.hmset key, 'size', count, 'url', url, (ehmset, r) ->
-                    if ehmset?
-                      sys.puts("ERROR: Storing info about #{url} failed! #{ehmset}")
-                    else
-                      sys.puts("Stored #{url} with size #{count}")
+        document = w.document
+        script = document.createElement('script')
+        script.src = jquery
+        script.type = 'text/javascript'
+        document.body.appendChild(script)
 
-        # OMG replace hacks!!
+        script = document.createElement('script')
+        script.src = "http://#{req.headers.host}:8081/sorting.js"
+        script.type = 'text/javascript'
+        document.body.appendChild(script)
+
+        $('#bookmark_list > .tableViewCell').each (i, e) ->
+          url = "http://#{instapaper}#{$('.textButton', e).attr('href')}"
+          key = Hash.sha1(url)[0..9]
+          $(e).attr('key', key)
+          redis.hget key, 'size', (error, reply) ->
+            unless reply?
+              redis.rpush 'download', url
         res.end(w.document.outerHTML.replace(/&amp;/g, '&'))
     else
       res.end(buffer)
@@ -59,7 +67,5 @@ http.createServer((req, res) ->
 ).listen(8080)
 
 app = express.createServer()
-app.get '/', (req, res) ->
-  res.send('Hello, World!')
-
+app.use(express.staticProvider(__dirname + '/public'))
 app.listen(8081)

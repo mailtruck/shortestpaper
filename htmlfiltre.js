@@ -350,7 +350,6 @@ var mimeTypes = {
  * @api private
  */
 function fetchData(method, uri, data, headers, callback, redirects) {
-
   var buf = '',
       redirects = redirects || 3,
       uri = url.parse(uri || ""),
@@ -381,7 +380,6 @@ function fetchData(method, uri, data, headers, callback, redirects) {
         }
   }
 
-
   var req = client.request(method, path + search + hash, headers);
 
   if (data && method !== 'GET') {
@@ -394,10 +392,10 @@ function fetchData(method, uri, data, headers, callback, redirects) {
       callback(new Error('request failed with status ' + res.statusCode + ' "' + http.STATUS_CODES[res.statusCode] + '"'));
 
     } else if (res.statusCode >= 300 && res.statusCode < 400 && res.statusCode !== 304) {
-
         redirects--;
         if (redirects > 0) {
-            fetchData(method, res.headers.location, data, headers, callback, redirects);
+          u = res.headers.location.match(/http/) ? res.headers.location : "http://" + headers.host + res.headers.location;
+            fetchData(method, u, data, headers, callback, redirects);
         } else {
             callback(new Error('maximum number of redirects reached'));
         }
@@ -431,18 +429,15 @@ function fetchData(method, uri, data, headers, callback, redirects) {
  */
 exports.htmlFiltre = function(req, config, htmlCallback, nonHtmlCallback) {
 
-    var foreignHostPort = config.foreignHostPort || 8888;
-
     var header = req.headers,
         host = header.host;
 
     var parsed = url.parse("http://" + host),
         foreignHost = config.foreignHost || parsed.hostname;
 
-
     var path = req.url.split("."),
         fileExtension = path[path.length - 1],
-        loc = "http://" + foreignHost + ":" + foreignHostPort + req.url,
+        loc = "http://" + foreignHost + req.url,
         sentData = "";
 
     var mimeType = mimeTypes[fileExtension] || "text/html";
@@ -468,10 +463,10 @@ exports.htmlFiltre = function(req, config, htmlCallback, nonHtmlCallback) {
                delete header["if-modified-since"];
 
                // set up the referer
-               header["referer"] = "http://" + foreignHost + ":" + foreignHostPort + req.url;
+               header["referer"] = "http://" + foreignHost + req.url;
 
                // fetching the content from the server
-               fetchData(req.method,"http://" + foreignHost + ":" + foreignHostPort + req.url, sentData, header, function (status, buffer, request, response) {
+               fetchData(req.method,"http://" + foreignHost + req.url, sentData, header, function (status, buffer, request, response) {
 
                    if (htmlCallback !== undefined) {
                        htmlCallback(status, buffer, request, response, loc);

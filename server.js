@@ -1,4 +1,4 @@
-var app, express, http, instapaper, jquery, jsdom, proxy, queryString, redis, request, sys;
+var app, express, http, instapaper, jquery, jsdom, process, proxy, queryString, redis, request, sys;
 require('joose');
 require('joosex-namespace-depended');
 require('hash');
@@ -12,36 +12,50 @@ redis = require('redis').createClient();
 request = require('request');
 jquery = 'https://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js';
 instapaper = 'www.instapaper.com';
-setInterval(function() {
+process = function() {
   return redis.lpop('download', function(error, reply) {
     var key, url;
     if (typeof reply !== "undefined" && reply !== null) {
       url = reply.toString();
       key = Hash.sha1(url).slice(0, 9 + 1);
-      return request({
-        uri: url
-      }, function(error, resp, body) {
-        return !(typeof error !== "undefined" && error !== null) ? jsdom.jQueryify(jsdom.jsdom(body).createWindow(), jquery, function(w, $) {
-          var _i, _len, _ref, count, word, words;
-          if (w.document.outerHTML.match(/Exceeded rate limit/)) {
-            return redis.rpush('download', url);
-          } else {
-            count = 0;
-            words = $('#story').text().split(/\s+/);
-            _ref = words;
-            for (_i = 0, _len = _ref.length; _i < _len; _i++) {
-              word = _ref[_i];
-              if (word.length > 2) {
-                count += 1;
+      return redis.get(key, function(error, reply) {
+        if (!(typeof reply !== "undefined" && reply !== null)) {
+          sys.puts("Analyzing " + (url));
+          return request({
+            uri: url
+          }, function(error, resp, body) {
+            setTimeout(process, 10000);
+            return !(typeof error !== "undefined" && error !== null) ? jsdom.jQueryify(jsdom.jsdom(body).createWindow(), jquery, function(w, $) {
+              var _i, _len, _ref, count, word, words;
+              if (w.document.outerHTML.match(/Exceeded rate limit/)) {
+                sys.puts("Retrying " + (url));
+                return redis.rpush('download', url);
+              } else {
+                count = 0;
+                words = $('#story').text().split(/\s+/);
+                _ref = words;
+                for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+                  word = _ref[_i];
+                  if (word.length > 2) {
+                    count += 1;
+                  }
+                }
+                return redis.set(key, count, function(e, r) {
+                  return sys.puts("Counted and stored " + (url));
+                });
               }
-            }
-            return redis.set(key, count);
-          }
-        }) : null;
+            }) : null;
+          });
+        } else {
+          return setTimeout(process, 1000);
+        }
       });
+    } else {
+      return setTimeout(process, 1000);
     }
   });
-}, 10000);
+};
+process();
 http.createServer(function(req, res) {
   var host;
   host = req.headers.host;
@@ -67,8 +81,12 @@ http.createServer(function(req, res) {
         url = ("http://" + (instapaper) + ($('.textButton', e).attr('href')));
         key = Hash.sha1(url).slice(0, 9 + 1);
         $(e).attr('key', key);
+        sys.puts("Found URL " + (url));
         return redis.get(key, function(error, reply) {
-          return !(typeof reply !== "undefined" && reply !== null) ? redis.rpush('download', url) : null;
+          if (!(typeof reply !== "undefined" && reply !== null)) {
+            sys.puts("Queueing " + (url) + " for download");
+            return redis.rpush('download', url);
+          }
         });
       });
       return res.end(w.document.outerHTML.replace(/&amp;/g, '&'));
@@ -82,12 +100,6 @@ http.createServer(function(req, res) {
 }).listen(8080);
 app = express.createServer();
 app.use(express.staticProvider(__dirname + '/public'));
-app.get('/sorting.js', function(req, res) {
-  res.writeHead(200, {
-    'Content-Type': 'text/javascript; charset=utf-8'
-  });
-  return res.end("alert('World!');");
-});
 app.get('/counts.json', function(req, res) {
   var params, query;
   res.writeHead(200, {

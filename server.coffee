@@ -12,26 +12,37 @@ request = require('request')
 jquery = 'https://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js'
 instapaper = 'www.instapaper.com'
 
-setInterval((() ->
+process = () ->
   redis.lpop 'download', (error, reply) ->
     if reply?
       url = reply.toString()
       key = Hash.sha1(url)[0..9]
-      request { uri: url }, (error, resp, body) ->
-        unless error?
-          jsdom.jQueryify jsdom.jsdom(body).createWindow(), jquery, (w, $) ->
-            if w.document.outerHTML.match(/Exceeded rate limit/)
-              # Try again
-              redis.rpush 'download', url
-            else
-              # Count the number of words in the `#story` element.
-              count = 0
-              words = $('#story').text().split(/\s+/)
-              for word in words
-                # Only include words > 2 characters
-                count += 1 if word.length > 2
-              redis.set key, count
-), 10000)
+      redis.get key, (error, reply) ->
+        unless reply?
+          sys.puts("Analyzing #{url}")
+          request { uri: url }, (error, resp, body) ->
+            setTimeout(process, 10000)
+            unless error?
+              jsdom.jQueryify jsdom.jsdom(body).createWindow(), jquery, (w, $) ->
+                if w.document.outerHTML.match(/Exceeded rate limit/)
+                  # Try again
+                  sys.puts("Retrying #{url}")
+                  redis.rpush 'download', url
+                else
+                  # Count the number of words in the `#story` element.
+                  count = 0
+                  words = $('#story').text().split(/\s+/)
+                  for word in words
+                    # Only include words > 2 characters
+                    count += 1 if word.length > 2
+                  redis.set key, count, (e, r) ->
+                    sys.puts("Counted and stored #{url}")
+        else
+          setTimeout(process, 1000)
+    else
+      setTimeout(process, 1000)
+
+process()
 
 http.createServer((req, res) ->
   host = req.headers.host
@@ -56,8 +67,10 @@ http.createServer((req, res) ->
           url = "http://#{instapaper}#{$('.textButton', e).attr('href')}"
           key = Hash.sha1(url)[0..9]
           $(e).attr('key', key)
+          sys.puts("Found URL #{url}")
           redis.get key, (error, reply) ->
             unless reply?
+              sys.puts("Queueing #{url} for download")
               redis.rpush 'download', url
         res.end(w.document.outerHTML.replace(/&amp;/g, '&'))
     else
@@ -70,11 +83,6 @@ http.createServer((req, res) ->
 
 app = express.createServer()
 app.use(express.staticProvider(__dirname + '/public'))
-app.get '/sorting.js', (req, res) ->
-  res.writeHead(200, {
-    'Content-Type': 'text/javascript; charset=utf-8'
-  })
-  res.end("alert('World!');")
 
 app.get '/counts.json', (req, res) ->
   res.writeHead(200, {

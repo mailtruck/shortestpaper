@@ -1,0 +1,9 @@
+h1. shortestpaper
+
+# Get redis, node.js, and npm
+# Install some stuff with npm (check the code and run things to get an idea...deps file coming)
+# Run redis: @redis-server redis.conf@ (might have to make the @redis@ directory)
+# Run node.js: @node server.js@
+# Visit http://www.smackaho.st:8080/ and do your Instapaper business
+# View the logs to see it add URLs, download and analyze them. It takes a while since Instapaper has a rate limit.
+# Refresh a view times and you'll see articles now have a word count, and a sort order.

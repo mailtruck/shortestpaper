@@ -16,6 +16,9 @@ process = function() {
   return redis.lpop('download', function(error, reply) {
     var key, url;
     if (typeof reply !== "undefined" && reply !== null) {
+      redis.llen('download', function(e, r) {
+        return sys.puts("" + (r) + " URLs left");
+      });
       url = reply.toString();
       key = Hash.sha1(url).slice(0, 9 + 1);
       return redis.get(key, function(error, reply) {

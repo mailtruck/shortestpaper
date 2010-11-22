@@ -15,6 +15,8 @@ instapaper = 'www.instapaper.com'
 process = () ->
   redis.lpop 'download', (error, reply) ->
     if reply?
+      redis.llen 'download', (e, r) ->
+        sys.puts("#{r} URLs left")
       url = reply.toString()
       key = Hash.sha1(url)[0..9]
       redis.get key, (error, reply) ->

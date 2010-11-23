@@ -4,7 +4,7 @@ require('hash')
 queryString = require('querystring')
 http = require('http')
 sys = require('sys')
-proxy = require('./htmlfiltre')
+httpProxy = require('./node-http-proxy')
 jsdom = require('jsdom')
 express = require('express')
 redis = require('redis').createClient()
@@ -46,40 +46,38 @@ process = () ->
 
 process()
 
-http.createServer((req, res) ->
-  host = req.headers.host
-  proxy.htmlFiltre(req, { foreignHost: instapaper }, ((status, buffer, preq, response, loc) ->
-    headers = response.headers
-    res.writeHead('200', headers)
+httpProxy.createServer((req, res, proxy) ->
+  # Have to clear this so we don't get gzip crap
+  # TODO: Make it work with gzip
+  req.headers['accept-encoding'] = ''
+  buffer = ''
+  proxy.proxyRequest(80, instapaper, /text\/html/, ((chunk) ->
+    buffer += chunk
+  ), (() ->
+    jsdom.jQueryify jsdom.jsdom(buffer).createWindow(), jquery, (w, $) ->
+      document = w.document
 
-    if headers['content-type'].match(/text\/html/)
-      jsdom.jQueryify jsdom.jsdom(buffer).createWindow(), jquery, (w, $) ->
-        document = w.document
-        script = document.createElement('script')
-        script.src = jquery
-        script.type = 'text/javascript'
-        document.body.appendChild(script)
+      script = document.createElement('script')
+      script.src = jquery
+      script.type = 'text/javascript'
+      document.body.appendChild(script)
 
-        script = document.createElement('script')
-        script.src = "http://#{host.replace(/8080/, '8081')}/sorting.js"
-        script.type = 'text/javascript'
-        document.body.appendChild(script)
+      script = document.createElement('script')
+      # script.src = "http://#{req.headers.host.replace(/8080/, '8081')}/sorting.js"
+      script.src = '/sorting.js'
+      script.type = 'text/javascript'
+      document.body.appendChild(script)
 
-        $('#bookmark_list > .tableViewCell').each (i, e) ->
-          url = "http://#{instapaper}#{$('.textButton', e).attr('href')}"
-          key = Hash.sha1(url)[0..9]
-          $(e).attr('key', key)
-          sys.puts("Found URL #{url}")
-          redis.get key, (error, reply) ->
-            unless reply?
-              sys.puts("Queueing #{url} for download")
-              redis.rpush 'download', url
-        res.end(w.document.outerHTML.replace(/&amp;/g, '&'))
-    else
-      res.end(buffer)
-  ), ((loc) ->
-    res.writeHead('302', { Location: loc })
-    res.end()
+      $('#bookmark_list > .tableViewCell').each (i, e) ->
+        url = "http://#{instapaper}#{$('.textButton', e).attr('href')}"
+        key = Hash.sha1(url)[0..9]
+        $(e).attr('key', key)
+        sys.puts("Found URL #{url}")
+        redis.get key, (error, reply) ->
+          unless reply?
+            sys.puts("Queueing #{url} for download")
+            redis.rpush 'download', url
+      res.end(w.document.outerHTML.replace(/&amp;/g, '&'))
   ))
 ).listen(8080)
 

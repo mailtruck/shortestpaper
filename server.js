@@ -1,11 +1,11 @@
-var app, express, http, instapaper, jquery, jsdom, process, proxy, queryString, redis, request, sys;
+var app, express, http, httpProxy, instapaper, jquery, jsdom, process, queryString, redis, request, sys;
 require('joose');
 require('joosex-namespace-depended');
 require('hash');
 queryString = require('querystring');
 http = require('http');
 sys = require('sys');
-proxy = require('./htmlfiltre');
+httpProxy = require('./node-http-proxy');
 jsdom = require('jsdom');
 express = require('express');
 redis = require('redis').createClient();
@@ -59,16 +59,14 @@ process = function() {
   });
 };
 process();
-http.createServer(function(req, res) {
-  var host;
-  host = req.headers.host;
-  return proxy.htmlFiltre(req, {
-    foreignHost: instapaper
-  }, function(status, buffer, preq, response, loc) {
-    var headers;
-    headers = response.headers;
-    res.writeHead('200', headers);
-    return headers['content-type'].match(/text\/html/) ? jsdom.jQueryify(jsdom.jsdom(buffer).createWindow(), jquery, function(w, $) {
+httpProxy.createServer(function(req, res, proxy) {
+  var buffer;
+  req.headers['accept-encoding'] = '';
+  buffer = '';
+  return proxy.proxyRequest(80, instapaper, /text\/html/, function(chunk) {
+    return buffer += chunk;
+  }, function() {
+    return jsdom.jQueryify(jsdom.jsdom(buffer).createWindow(), jquery, function(w, $) {
       var document, script;
       document = w.document;
       script = document.createElement('script');
@@ -76,7 +74,7 @@ http.createServer(function(req, res) {
       script.type = 'text/javascript';
       document.body.appendChild(script);
       script = document.createElement('script');
-      script.src = ("http://" + (host.replace(/8080/, '8081')) + "/sorting.js");
+      script.src = '/sorting.js';
       script.type = 'text/javascript';
       document.body.appendChild(script);
       $('#bookmark_list > .tableViewCell').each(function(i, e) {
@@ -93,12 +91,7 @@ http.createServer(function(req, res) {
         });
       });
       return res.end(w.document.outerHTML.replace(/&amp;/g, '&'));
-    }) : res.end(buffer);
-  }, function(loc) {
-    res.writeHead('302', {
-      Location: loc
     });
-    return res.end();
   });
 }).listen(8080);
 app = express.createServer();

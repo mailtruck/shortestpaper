@@ -1,2 +1,6 @@
 test.js
 redis/
+tmp/
+logs/
+run/
+config.sqlite

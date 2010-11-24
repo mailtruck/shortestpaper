@@ -113,4 +113,4 @@ httpProxy.createServer((req, res, proxy) ->
           url: "http://#{instapaper}#{req.url}"
         }))
       ))
-).listen(8080)
+).listen(process.ARGV[2] || 8080)
